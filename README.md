@@ -2,25 +2,23 @@
 
 > An AI-powered web application that lets users upload CSV/Excel files, explore data, ask natural language questions, generate charts, and manage prompt history.
 
----
-
 ## Table of Contents
 
 1. [Overview](#overview)
 2. [Functional Requirements](#functional-requirements)
 3. [Non-Functional Requirements](#non-functional-requirements)
-4. [Technology Stack](#technology-stack)
-5. [System Architecture](#system-architecture)
-6. [Quick Start](#quick-start)
-7. [Further Improvements](#further-improvements)
-
----
+4. [Project Structure](#project-structure)
+5. [Technology Stack](#technology-stack)
+6. [System Architecture](#system-architecture)
+7. [Quick Start](#quick-start)
+8. [Local Setup](#local-setup-without-docker)
+9. [Further Improvements](#further-improvements)
+10. [References](#references)
 
 ## Overview
 
 This application allows users to:
 
-- Register and sign in with name, email, and password
 - Upload one or more CSV / Excel (`.csv`, `.xlsx`, `.xls`) files
 - Preview the top N rows of any uploaded sheet
 - Ask natural language questions about their data and receive AI-generated answers and charts
@@ -29,52 +27,32 @@ This application allows users to:
 
 The system is designed around five pillars: **scalability**, **reliability**, **availability**, **performance efficiency**, and **security**.
 
----
-
 ## Functional Requirements
 
-### 1. Authentication
-- User registers with first name, last name, email, and password
-- Password must satisfy all of the following rules:
-  - Minimum 8 characters
-  - At least one uppercase letter (A–Z)
-  - At least one lowercase letter (a–z)
-  - At least one number (0–9)
-  - At least one special character (`!@#$%^&*`)
-- Password hashed with bcrypt
-- Login issues a JWT signed with RS256 (asymmetric key pair):
-  - **Private key:** stored in `.env`, loaded into the Auth container only. Used to sign the token at login
-  - **Public key:** cached Redis to verify tokens 
-  - **Token:** held in Streamlit `st.session_state`
-- Every API request carries the JWT in `Authorization: Bearer`. FastAPI fetches the public key from Redis and verifies the signature and expiry locally
-- Logout clears `st.session_state` - the token expires naturally within its TTL
-
-### 2. File Upload
+### 1. File Upload
 - User uploads one or more `.csv`, `.xlsx`, or `.xls` files
 - Minimum file size: 250 rows
 - System validates file type, size (max 10 MB), and content
 - System parses file, extracts schema and metadata, assigns a `dataset_id`
 - Raw file stored in MinIO object storage
 
-### 3. Data Preview
+### 2. Data Preview
 - User selects a dataset and a sheet (for multi-sheet Excel files)
 - User defines N (top N rows to display)
 - System returns a paginated table view
 
-### 4. AI Query
+### 3. AI Query
 - User types a free-text question about the selected dataset
 - System generates a natural language answer and optionally a chart
 - Model is capable of generating graphs
 
-### 5. Prompt History
+### 4. Prompt History
 - Every prompt and its result is persisted per session
 - User can browse past prompts filtered by dataset
 - User can one-click reuse a past prompt
 
-### 6. Feedback (Bonus)
+### 5. Feedback (Bonus)
 - User can rate each answer: 👍 useful (+1) or 👎 not useful (−1)
-
----
 
 ## Non-Functional Requirements
 
@@ -84,15 +62,29 @@ The system is designed around five pillars: **scalability**, **reliability**, **
 | **Reliability** | No crash on bad prompts, large files, or code errors | RestrictedPython sandbox; Celery re-queues on worker crash; exponential backoff retry on OpenAI calls; multi-layer file validation |
 | **Availability** | Service always responds | Async FastAPI offloads slow LLM calls to Celery, keeping HTTP responsive |
 | **Performance** | Low latency for common operations | In-process LRU DFCache for DataFrames; async Celery queue decouples slow operations; Redis caches history results for reruns without repeat LLM calls |
-| **Security** | Protect API key, prevent code injection, isolate sessions | RestrictedPython sandbox; API key management; NGINX IP-based rate limiting; bcrypt password hashing |
+| **Security** | Protect API key, prevent code injection, isolate sessions | RestrictedPython sandbox; API key management; NGINX IP-based rate limiting |
 
----
+## Project Structure
+
+```
+ai-csv-app/
+├── backend/
+│   ├── main.py              
+│   └── requirements.txt
+├── frontend/
+│   ├── app.py        
+│   └── requirements.txt
+├── docker-compose.yml
+├── Makefile
+├── .env
+└── README.md
+```
 
 ## Technology Stack
 
 - **Frontend:** Streamlit
 - **Backend API:** FastAPI + Uvicorn
-- **AI Engine:** PandasAI + Microsoft LIDA
+- **AI Engine:** PandasAI 
 - **Code Sandbox:** RestrictedPython
 - **Task Queue:** Celery
 - **Message Broker:** Redis 
@@ -102,8 +94,6 @@ The system is designed around five pillars: **scalability**, **reliability**, **
 - **Database:** PostgreSQL
 - **Reverse Proxy:** NGINX 
 - **Containerization:** Docker Compose
-
----
 
 ## System Architecture
 
@@ -124,8 +114,7 @@ graph TB
     end
 
     subgraph backend["Backend - FastAPI"]
-        FastAPI[FastAPI<br/>routing · auth · validation]
-        FastAPI --> AuthSvc[Auth service<br/>register · login]
+        FastAPI[FastAPI<br/>routing · validation]
         FastAPI --> DatasetSvc[Dataset service<br/>upload · parse · preview]
         FastAPI --> QuerySvc[Query / AI service<br/>enqueue · poll]
         FastAPI --> HistorySvc[History service<br/>save · list · reuse]
@@ -149,8 +138,6 @@ graph TB
         Postgres[(PostgreSQL<br/>users · history · feedback)]
     end
 
-    AuthSvc -->|seed public key on startup| Redis
-    AuthSvc -->|read/write users| Postgres
     FastAPI -->|fetch public key| Redis
     DatasetSvc <-->|read/write df| DFCache
     DatasetSvc -->|store raw file| MinIO
@@ -165,29 +152,66 @@ graph TB
     CeleryBeat -->|cleanup tasks| Redis
 
     subgraph external["External"]
-        OpenAI([OpenAI API<br/>GPT-4o])
+        OpenAI([OpenAI API])
     end
 
     CeleryWorker -->|LLM call| OpenAI
 
 ```
 
----
-
 ## Quick Start
 
+### Prerequisites
+- Docker & Docker Compose
+- Python 3.11
+
+### 1. Clone and configure
 ```bash
 git clone https://github.com/haiyen11231/ai-data-assistant.git
 cd ai-data-assistant
 touch .env
-docker compose up --build
 ```
 
----
+Edit `.env` and add your OpenAI API key:
+```bash
+# Example
+...
+```
+
+### 2. Start all services
+```bash
+docker-compose up --build
+```
+
+### 3. Open the app
+- Frontend: ...
+- Backend API docs: ...
+
+## Local Setup (without Docker)
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+```
+
+### Backend
+```bash
+cd backend
+pip install -r requirements.txt
+...
+```
+
+### Frontend
+```bash
+cd frontend
+pip install -r requirements.txt
+streamlit run app.py
+```
 
 ## Further Improvements
 
-- **Streaming:** stream LLM tokens via SSE for faster perceived response
-- **Vector search:** embed questions + schema to find semantically similar past prompts
 - **Kubernetes:** swap Docker Compose for K8s when horizontal scaling is needed
-- **Kafka:** graduate from Celery+Redis if query volume exceeds ~10k/sec
+
+## References
+
+- 

@@ -1,0 +1,4 @@
+streamlit==1.55.0
+pandas==2.3.3
+openpyxl==3.1.5 # For reading/writing Excel 2010 files (.xlsx, .xlsm, .xltx, and .xltm files)
+xlrd==2.0.2 # For reading/formatting Excel files (.xls only)
