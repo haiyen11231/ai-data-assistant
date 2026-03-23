@@ -4,6 +4,7 @@ import os, glob
 from dotenv import load_dotenv
 from pandasai import SmartDataframe
 from pandasai.llm import OpenAI
+import shutil
 
 load_dotenv()
 
@@ -38,9 +39,10 @@ if "dataframes" not in st.session_state:
 if "file_meta" not in st.session_state:
     # file_meta = [ { filename, sheet_name, rows, cols, key } ]
     st.session_state["file_meta"] = []
-if "messages" not in st.session_state:
-    # messages = [ { role, content, chart_path } ]
-    st.session_state["messages"] = []
+
+if "messages_by_file" not in st.session_state:
+    # messages_by_file = { "filename :: sheet_name": [ { role, content, chart_path } ] }
+    st.session_state["messages_by_file"] = {}
 
 # file parsing -> { sheet_name/filename: DataFrame }
 def parse_uploaded_file(uploaded_file) -> dict[str, pd.DataFrame]:
@@ -84,6 +86,7 @@ if uploaded_files:
         filename = uploaded_file.name
 
         # Skip if already parsed (avoid re-parsing on every rerun)
+        # TODO: Use set with session_state to track loaded files for O(1) lookups
         already_loaded = any(
             m["filename"] == filename
             for m in st.session_state["file_meta"]
@@ -188,10 +191,11 @@ selected_ai_label = st.selectbox(
     format_func=lambda x: f"@ {x}",
 )
 selected_ai_key = ai_options[selected_ai_label]
+messages = st.session_state["messages_by_file"].setdefault(selected_ai_key, [])
 ai_df = st.session_state["dataframes"][selected_ai_key]
 
 # Render existing chat messages
-for msg in st.session_state["messages"]:
+for msg in messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         # If the message has a chart, display it
@@ -205,7 +209,7 @@ question = st.chat_input("Ask a question about the data…")
 
 if question:
     # Store question in session state and display immediately
-    st.session_state["messages"].append({
+    messages.append({
         "role": "user",
         "content": f"`@{selected_ai_label}` {question}",
         "chart_path": None,
@@ -217,10 +221,13 @@ if question:
     with st.chat_message("assistant"):
         with st.spinner("Generating response…"):
             try:
-                llm = OpenAI(
-                    api_key=openai_api_key,
-                    model="gpt-4o",
-                )
+                if "llm" not in st.session_state:
+                    st.session_state["llm"] = OpenAI(
+                        api_key=openai_api_key,
+                        model="gpt-4o",
+                    )
+
+                llm = st.session_state["llm"]
 
                 sdf = SmartDataframe(
                     df=ai_df,
@@ -234,9 +241,11 @@ if question:
                     },
                 )
 
+                shutil.rmtree("/tmp/pandasai_charts", ignore_errors=True)
                 response = sdf.chat(question)
                 
-                # Check for generated charts                chart_files = glob.glob("/tmp/pandasai_charts/*.png")
+                # Check for generated charts                
+                chart_files = glob.glob("/tmp/pandasai_charts/*.png")
                 chart_path = None
                 chart_files = sorted(
                     glob.glob("/tmp/pandasai_charts/*.png"),
@@ -261,7 +270,7 @@ if question:
                     st.image(chart_path, width="stretch")
 
                 # Store the assistant's response in session state
-                st.session_state["messages"].append({
+                messages.append({
                     "role": "assistant",
                     "content": response_str,
                     "chart_path": chart_path,
@@ -269,7 +278,7 @@ if question:
             except Exception as e:
                 error_msg = f"Error generating response: {str(e)}"
                 st.error(error_msg)
-                st.session_state["messages"].append({
+                messages.append({
                     "role": "assistant",
                     "content": error_msg,
                     "chart_path": None,
