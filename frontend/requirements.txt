@@ -1,4 +1,8 @@
 streamlit==1.55.0
-pandas==2.3.3
+pandas==1.5.3
+openai==1.109.1
+pandasai==2.3.2
 openpyxl==3.1.5 # For reading/writing Excel 2010 files (.xlsx, .xlsm, .xltx, and .xltm files)
 xlrd==2.0.2 # For reading/formatting Excel files (.xls only)
+matplotlib==3.7.5
+python-dotenv==1.2.2

@@ -1,5 +1,11 @@
 import streamlit as st
 import pandas as pd
+import os, glob
+from dotenv import load_dotenv
+from pandasai import SmartDataframe
+from pandasai.llm import OpenAI
+
+load_dotenv()
 
 # Workflow:
 # 1. User uploads CSV / Excel files
@@ -9,6 +15,10 @@ import pandas as pd
 # - pick a file/sheet
 # - preview top N rows
 # - inspect schema (columns, nulls, types)
+# 4. Chat interface (like ChatGPT)
+# - LLM-powered data analysis (PandasAI)
+# - Chart generation
+# - Conversation memory
 
 # page config 
 st.set_page_config(
@@ -18,7 +28,7 @@ st.set_page_config(
 )
 
 st.title("📊 AI Data Assistant")
-st.caption("Step 1 — upload files and preview data")
+st.caption("Step 2 — upload files, preview data, and ask AI questions")
 
 # session state init
 if "dataframes" not in st.session_state:
@@ -28,7 +38,9 @@ if "dataframes" not in st.session_state:
 if "file_meta" not in st.session_state:
     # file_meta = [ { filename, sheet_name, rows, cols, key } ]
     st.session_state["file_meta"] = []
-
+if "messages" not in st.session_state:
+    # messages = [ { role, content, chart_path } ]
+    st.session_state["messages"] = []
 
 # file parsing -> { sheet_name/filename: DataFrame }
 def parse_uploaded_file(uploaded_file) -> dict[str, pd.DataFrame]:
@@ -153,3 +165,114 @@ with st.expander("Column details"):
         "Nulls": df.isnull().sum().values,
     })
     st.dataframe(col_info, use_container_width=True, hide_index=True)
+
+# AI chat section
+st.divider()
+st.subheader("💬 Ask AI about your data")
+
+openai_api_key = os.getenv("OPENAI_API_KEY")
+if not openai_api_key:
+    st.warning("⚠️ To enable AI features, set your OpenAI API key in the .env file.")
+    st.stop()
+
+# File selector for AI analysis
+ai_options = {
+    f"{m['filename']} — {m['sheet_name']}": m["key"]
+    for m in st.session_state["file_meta"]
+}
+
+selected_ai_label = st.selectbox(
+    "Select file / sheet for AI analysis",
+    options=list(ai_options.keys()),
+    key="ai_file_select",
+    format_func=lambda x: f"@ {x}",
+)
+selected_ai_key = ai_options[selected_ai_label]
+ai_df = st.session_state["dataframes"][selected_ai_key]
+
+# Render existing chat messages
+for msg in st.session_state["messages"]:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+        # If the message has a chart, display it
+        if msg.get("chart_path") and msg["chart_path"]:
+            try:
+                st.image(msg["chart_path"], width="stretch")
+            except Exception:
+                pass
+
+question = st.chat_input("Ask a question about the data…")
+
+if question:
+    # Store question in session state and display immediately
+    st.session_state["messages"].append({
+        "role": "user",
+        "content": f"`@{selected_ai_label}` {question}",
+        "chart_path": None,
+    })
+    with st.chat_message("user"):
+        st.markdown(f"`@{selected_ai_label}` {question}")
+
+    # Generate AI response
+    with st.chat_message("assistant"):
+        with st.spinner("Generating response…"):
+            try:
+                llm = OpenAI(
+                    api_key=openai_api_key,
+                    model="gpt-4o",
+                )
+
+                sdf = SmartDataframe(
+                    df=ai_df,
+                    config={
+                        "llm": llm,
+                        "save_charts": True,
+                        "save_charts_path": "/tmp/pandasai_charts",
+                        "verbose": False,
+                        "enforce_privacy": True,
+                        "max_retries": 2,
+                    },
+                )
+
+                response = sdf.chat(question)
+                
+                # Check for generated charts                chart_files = glob.glob("/tmp/pandasai_charts/*.png")
+                chart_path = None
+                chart_files = sorted(
+                    glob.glob("/tmp/pandasai_charts/*.png"),
+                    key=os.path.getmtime,
+                    reverse=True,
+                )
+                if chart_files:
+                    chart_path = chart_files[0]
+                
+                # Normalize response
+                if chart_path:
+                    response_str = "Here is the chart based on your question:"
+                elif isinstance(response, pd.DataFrame):
+                    response_str = response.to_markdown(index=False)
+                elif response is None:
+                    response_str = "No response generated. Try rephrasing your question."
+                else:
+                    response_str = str(response)
+                
+                st.markdown(response_str)
+                if chart_path:
+                    st.image(chart_path, width="stretch")
+
+                # Store the assistant's response in session state
+                st.session_state["messages"].append({
+                    "role": "assistant",
+                    "content": response_str,
+                    "chart_path": chart_path,
+                })
+            except Exception as e:
+                error_msg = f"Error generating response: {str(e)}"
+                st.error(error_msg)
+                st.session_state["messages"].append({
+                    "role": "assistant",
+                    "content": error_msg,
+                    "chart_path": None,
+                })
+        
+    st.rerun()
