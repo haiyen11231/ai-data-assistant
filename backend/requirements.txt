@@ -15,5 +15,8 @@ sqlalchemy==2.0.41
 psycopg2-binary==2.9.10
 alembic==1.16.1
 
-# S3 / MinIO
+# MinIO
 boto3==1.38.1
+
+# Redis
+redis==5.2.1

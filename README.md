@@ -7,13 +7,11 @@
 1. [Overview](#overview)
 2. [Functional Requirements](#functional-requirements)
 3. [Non-Functional Requirements](#non-functional-requirements)
-4. [Project Structure](#project-structure)
-5. [Technology Stack](#technology-stack)
-6. [System Architecture](#system-architecture)
-7. [Quick Start](#quick-start)
-8. [Local Setup](#local-setup-without-docker)
-9. [Further Improvements](#further-improvements)
-10. [References](#references)
+4. [Technology Stack](#technology-stack)
+5. [Quick Start](#quick-start)
+6. [Local Setup](#local-setup-without-docker)
+7. [Further Improvements](#further-improvements)
+8. [References](#references)
 
 ## Overview
 
@@ -64,100 +62,20 @@ The system is designed around five pillars: **scalability**, **reliability**, **
 | **Performance** | Low latency for common operations | In-process LRU DFCache for DataFrames; async Celery queue decouples slow operations; Redis caches history results for reruns without repeat LLM calls |
 | **Security** | Protect API key, prevent code injection, isolate sessions | RestrictedPython sandbox; API key management; NGINX IP-based rate limiting |
 
-## Project Structure
-
-```
-ai-csv-app/
-├── backend/
-│   ├── main.py              
-│   └── requirements.txt
-├── frontend/
-│   ├── app.py        
-│   └── requirements.txt
-├── docker-compose.yml
-├── Makefile
-├── .env
-└── README.md
-```
-
 ## Technology Stack
 
 - **Frontend:** Streamlit
 - **Backend API:** FastAPI + Uvicorn
 - **AI Engine:** PandasAI 
 - **Code Sandbox:** RestrictedPython
-- **Task Queue:** Celery
+- **Task Queue:** Celery (Have not implemented yet)
 - **Message Broker:** Redis 
 - **DataFrame Cache:** In-process LRU dict
 - **Query Result Cache:** Redis (history rerun only, not free-text queries)
 - **File Storage:** MinIO
 - **Database:** PostgreSQL
-- **Reverse Proxy:** NGINX 
+- **Reverse Proxy:** NGINX (Have not implemented yet)
 - **Containerization:** Docker Compose
-
-## System Architecture
-
-```mermaid
-graph TB
-    Browser([Browser])
-    Browser -->|HTTPS 80| NGINX
-
-    subgraph edge["Edge layer"]
-        NGINX[NGINX<br/>reverse proxy · rate limit · TLS]
-    end
-
-    NGINX -->|UI requests| Streamlit
-    NGINX -->|/api/* requests| FastAPI
-
-    subgraph frontend["Frontend"]
-        Streamlit[Streamlit<br/>UI · JWT in session_state]
-    end
-
-    subgraph backend["Backend - FastAPI"]
-        FastAPI[FastAPI<br/>routing · validation]
-        FastAPI --> DatasetSvc[Dataset service<br/>upload · parse · preview]
-        FastAPI --> QuerySvc[Query / AI service<br/>enqueue · poll]
-        FastAPI --> HistorySvc[History service<br/>save · list · reuse]
-        FastAPI --> FeedbackSvc[Feedback service<br/>ratings · store]
-    end
-
-    Streamlit -->|internal Docker network| FastAPI
-
-    subgraph async["Async layer"]
-        CeleryWorker[Celery worker<br/>PandasAI · LIDA · sandbox]
-        CeleryBeat[Celery Beat<br/>scheduled cleanup]
-    end
-
-    QuerySvc -->|enqueue task| CeleryWorker
-    DatasetSvc -->|enqueue parse| CeleryWorker
-
-    subgraph storage["Storage"]
-        DFCache[(In-proc LRU<br/>DFCache)]
-        MinIO[(MinIO<br/>raw files)]
-        Redis[(Redis<br/>public key · broker · results)]
-        Postgres[(PostgreSQL<br/>users · history · feedback)]
-    end
-
-    FastAPI -->|fetch public key| Redis
-    DatasetSvc <-->|read/write df| DFCache
-    DatasetSvc -->|store raw file| MinIO
-    CeleryWorker <-->|df cache| DFCache
-    CeleryWorker -->|reload on miss| MinIO
-    CeleryWorker -->|write result| Redis
-    CeleryWorker -->|save history| Postgres
-    QuerySvc -->|poll result| Redis
-    QuerySvc -->|enqueue via broker| Redis
-    HistorySvc -->|read/write| Postgres
-    FeedbackSvc -->|write| Postgres
-    CeleryBeat -->|cleanup tasks| Redis
-
-    subgraph external["External"]
-        OpenAI([OpenAI API])
-    end
-
-    CeleryWorker -->|LLM call| OpenAI
-
-```
 
 ## Quick Start
 
@@ -174,7 +92,27 @@ touch .env
 
 Edit `.env` and add your OpenAI API key:
 ```bash
-# Example
+# OpenAI 
+OPENAI_API_KEY=sk-proj-xxx
+
+# Postgres
+POSTGRES_USER=aiuser
+POSTGRES_PASSWORD=password
+POSTGRES_DB=aiassistant
+
+# Redis
+REDIS_PASSWORD=changeme_redis_password
+
+# MinIO
+AWS_ACCESS_KEY_ID=minioadmin
+AWS_SECRET_ACCESS_KEY=minio_password
+AWS_DEFAULT_REGION=us-east-1
+AI_BUCKET=ai-data-assistant
+# S3_ENDPOINT_URL=http://localhost:9000   # local dev without Docker
+
+# App
+ALLOWED_ORIGINS=http://localhost:8501,http://frontend:8501
+BACKEND_URL=http://localhost:8000
 ...
 ```
 
@@ -223,8 +161,6 @@ streamlit run app.py
         - [ ] System should be able to handle complex question (compound sentence)
         - [x] System should be able to handle no result / empty response
         - [ ] System should be able to handle invalid queries
-- [ ] System should have some suggested prompts according to selected sheets
-to get answers from the CSVs/Excels. User can ask questions for any of the sheets/ CSVs
 - [x] System should be able to support querying one sheet at a time
 - [ ] System should be able to support querying multiple sheets/files (future improvement)
     - [ ] System should be able to define relationships or joins between datasets

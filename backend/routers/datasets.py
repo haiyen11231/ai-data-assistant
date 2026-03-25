@@ -1,16 +1,3 @@
-"""
-Upload flow:
-  1. Validate file (parser.py — unchanged)
-  2. Parse into DataFrames (parser.py — unchanged)
-  3. Upload raw bytes to S3 (storage.py)
-  4. Write metadata row to Postgres (crud/datasets.py)
-  5. Cache DataFrame in LRU cache (df_cache.py)
-  6. Return SheetMeta to frontend
-
-The cache-miss → S3 reload means the app survives backend restarts
-without losing access to previously uploaded data.
-"""
-
 from __future__ import annotations
 import io
 from typing import Any
@@ -23,6 +10,8 @@ from backend.crud import datasets as ds_crud
 from backend.db.session import get_db
 from backend.models.schemas import PreviewResponse, SheetMeta, UploadResponse
 from backend.services.df_cache import df_cache
+from backend.services.session_cache import session_cache
+from backend.services.rate_limiter import rate_limiter, RATE_LIMITS
 from backend.services.parser import parse_upload
 from backend.services import storage
 
@@ -36,22 +25,43 @@ def _session_id(request: Request) -> str:
     return sid
 
 
+def _get_client_ip(request: Request) -> str:
+    x_forwarded_for = request.headers.get("X-Forwarded-For")
+    if x_forwarded_for:
+        return x_forwarded_for.split(",")[0].strip()
+    x_real_ip = request.headers.get("X-Real-IP")
+    if x_real_ip:
+        return x_real_ip
+    return request.client.host if request.client else "unknown"
+
+
 @router.post("/upload", response_model=UploadResponse)
 async def upload_files(
     request: Request,
     files: list[UploadFile] = File(...),
     db: DBSession = Depends(get_db),
 ) -> UploadResponse:
-    """
-    Upload files → S3 + Postgres + LRU cache.
-    """
     sid = _session_id(request)
+    client_ip = _get_client_ip(request)
+
+    # Rate limiting
+    allowed, rate_info = rate_limiter.check_rate_limit(
+        client_ip, 
+        RATE_LIMITS["upload"]["limit"], 
+        RATE_LIMITS["upload"]["window"], 
+        "upload"
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Upload rate limit exceeded. Try again in {rate_info.get('reset_time', 60)} seconds."
+        )
+
     all_sheets: list[SheetMeta] = []
 
     for file in files:
-        # Read raw bytes once — needed both for S3 and for parsing
         raw_bytes = await file.read()
-        file.file = io.BytesIO(raw_bytes)   # reset so parse_upload can read again
+        file.file = io.BytesIO(raw_bytes)
 
         sheets = await parse_upload(file)
 
@@ -60,16 +70,18 @@ async def upload_files(
             dataset_id: str = s["dataset_id"]
             filename: str = s["filename"]
 
-            # 1. Store raw file in S3 (one object per sheet for Excel;
-            #    same bytes for CSV's single sheet)
-            s3_key = storage.upload_file(
-                file_bytes=raw_bytes,
-                session_id=sid,
-                dataset_id=dataset_id,
-                filename=filename,
-            )
+            # Check for existing dataset with same filename (re-upload case)
+            existing_datasets = ds_crud.list_datasets(db, sid)
+            for existing in existing_datasets:
+                if existing.filename == filename and existing.sheet_name == s["sheet_name"]:
+                    # Invalidate caches for re-uploaded dataset
+                    df_cache.delete(str(existing.id))
+                    session_cache.invalidate_dataset_meta(str(existing.id))
 
-            # 2. Persist metadata to Postgres
+            # Store in MinIO
+            s3_key = storage.upload_file(raw_bytes, sid, dataset_id, filename)
+
+            # Store metadata in Postgres
             ds_crud.create_dataset(
                 db,
                 session_id=sid,
@@ -82,19 +94,23 @@ async def upload_files(
                 columns=df.columns.tolist(),
             )
 
-            # 3. Warm the LRU cache
+            # Warm caches
             df_cache.set(dataset_id, df)
+            
+            sheet_meta = {
+                "dataset_id": dataset_id,
+                "filename": filename,
+                "sheet_name": s["sheet_name"],
+                "rows": len(df),
+                "cols": len(df.columns),
+                "columns": df.columns.tolist(),
+            }
+            session_cache.set_dataset_meta(dataset_id, sheet_meta)
 
-            all_sheets.append(
-                SheetMeta(
-                    dataset_id=dataset_id,
-                    filename=filename,
-                    sheet_name=s["sheet_name"],
-                    rows=len(df),
-                    cols=len(df.columns),
-                    columns=df.columns.tolist(),
-                )
-            )
+            all_sheets.append(SheetMeta(**sheet_meta))
+
+    # Warm session cache
+    session_cache.warm_session_cache(sid, [s.dict() for s in all_sheets])
 
     return UploadResponse(
         success=True,
@@ -108,15 +124,39 @@ def list_datasets(
     request: Request,
     db: DBSession = Depends(get_db),
 ) -> UploadResponse:
-    """
-    Return all datasets for this session.
-    Called by the frontend on page load to restore file_meta
-    without re-uploading (history survives refresh).
-    """
     sid = _session_id(request)
+    
+    # Try session cache first
+    cached_session = session_cache.get_session(sid)
+    if cached_session and cached_session.get("dataset_count", 0) > 0:
+        # Try to get cached metadata for each dataset
+        cached_sheets = []
+        rows = ds_crud.list_datasets(db, sid)  # Still need DB for authoritative list
+        
+        for row in rows:
+            cached_meta = session_cache.get_dataset_meta(str(row.id))
+            if cached_meta:
+                cached_sheets.append(SheetMeta(**cached_meta))
+            else:
+                # Cache miss — build from DB and warm cache
+                sheet_meta = SheetMeta(
+                    dataset_id=str(row.id),
+                    filename=row.filename,
+                    sheet_name=row.sheet_name,
+                    rows=row.row_count,
+                    cols=row.col_count,
+                    columns=row.columns,
+                )
+                session_cache.set_dataset_meta(str(row.id), sheet_meta.dict())
+                cached_sheets.append(sheet_meta)
+                
+        return UploadResponse(success=True, sheets=cached_sheets)
+    
+    # Cold path — no cache
     rows = ds_crud.list_datasets(db, sid)
-    sheets = [
-        SheetMeta(
+    sheets = []
+    for row in rows:
+        sheet_meta = SheetMeta(
             dataset_id=str(row.id),
             filename=row.filename,
             sheet_name=row.sheet_name,
@@ -124,8 +164,9 @@ def list_datasets(
             cols=row.col_count,
             columns=row.columns,
         )
-        for row in rows
-    ]
+        session_cache.set_dataset_meta(str(row.id), sheet_meta.dict())
+        sheets.append(sheet_meta)
+    
     return UploadResponse(success=True, sheets=sheets)
 
 
@@ -136,38 +177,48 @@ def preview(
     n: int = Query(default=10, ge=1, le=500),
     db: DBSession = Depends(get_db),
 ) -> PreviewResponse:
-    """
-    Return top-N rows. Loads from LRU cache; falls back to S3 on miss.
-    """
+    """Preview with DataFrame caching (Redis fallback to MinIO)."""
     sid = _session_id(request)
 
-    # Verify ownership via Postgres
-    meta = ds_crud.get_dataset(db, dataset_id, sid)
-    if meta is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Dataset {dataset_id!r} not found for this session.",
-        )
+    # Check cached metadata first
+    cached_meta = session_cache.get_dataset_meta(dataset_id)
+    if cached_meta:
+        meta_dict = cached_meta
+    else:
+        # Fallback to database
+        meta_row = ds_crud.get_dataset(db, dataset_id, sid)
+        if meta_row is None:
+            raise HTTPException(status_code=404, detail="Dataset not found.")
+        meta_dict = {
+            "filename": meta_row.filename,
+            "sheet_name": meta_row.sheet_name,
+            "s3_key": meta_row.s3_key,
+            "row_count": meta_row.row_count,
+            "col_count": meta_row.col_count,
+            "columns": meta_row.columns,
+        }
+        session_cache.set_dataset_meta(dataset_id, meta_dict)
 
-    # Try cache first
+    # Try DataFrame cache (Redis)
     df = df_cache.get(dataset_id)
 
     if df is None:
-        # Cache miss — reload from S3
+        # Cache miss — load from MinIO
         try:
-            raw_bytes = storage.download_file(meta.s3_key)
+            raw_bytes = storage.download_file(meta_dict["s3_key"])
         except Exception as exc:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Could not retrieve file from storage: {exc}",
-            )
+            raise HTTPException(status_code=502, detail=f"Storage error: {exc}")
+        
         buf = io.BytesIO(raw_bytes)
-        ext = meta.filename.rsplit(".", 1)[-1].lower()
+        ext = meta_dict["filename"].rsplit(".", 1)[-1].lower()
+        
         if ext == "csv":
             df = pd.read_csv(buf)
         else:
             xl = pd.ExcelFile(buf, engine="openpyxl" if ext == "xlsx" else "xlrd")
-            df = xl.parse(meta.sheet_name)
+            df = xl.parse(meta_dict["sheet_name"])
+        
+        # Warm the cache
         df_cache.set(dataset_id, df)
 
     top_n = df.head(n).fillna("").astype(str)
@@ -184,8 +235,8 @@ def preview(
     return PreviewResponse(
         success=True,
         dataset_id=dataset_id,
-        sheet_name=meta.sheet_name,
-        filename=meta.filename,
+        sheet_name=meta_dict["sheet_name"],
+        filename=meta_dict["filename"],
         total_rows=len(df),
         columns=df.columns.tolist(),
         rows=top_n.to_dict(orient="records"),

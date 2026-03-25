@@ -1,39 +1,62 @@
 from __future__ import annotations
-from collections import OrderedDict
-from threading import Lock
+import logging
+from typing import Optional
+
 import pandas as pd
 
-_MAX_ENTRIES = 50   # ~50 datasets in memory at once
+from backend.services.redis_client import (
+    get_redis, serialize_df, deserialize_df, make_cache_key, TTL_DATAFRAME
+)
+
+logger = logging.getLogger(__name__)
 
 
-class _LRUCache:
-    def __init__(self, maxsize: int = _MAX_ENTRIES):
-        self._cache: OrderedDict[str, pd.DataFrame] = OrderedDict()
-        self._lock = Lock()
-        self._maxsize = maxsize
+class DataFrameCache:
+    def __init__(self):
+        self.redis = get_redis()
 
-    def get(self, key: str) -> pd.DataFrame | None:
-        with self._lock:
-            if key not in self._cache:
+    def _key(self, dataset_id: str) -> str:
+        return make_cache_key("df", dataset_id)
+
+    def get(self, dataset_id: str) -> Optional[pd.DataFrame]:
+        try:
+            key = self._key(dataset_id)
+            data = self.redis.get(key)
+            if data is None:
                 return None
-            self._cache.move_to_end(key)
-            return self._cache[key]
+            return deserialize_df(data)
+        except Exception as e:
+            logger.warning(f"DataFrame cache get failed for {dataset_id}: {e}")
+            return None
 
-    def set(self, key: str, df: pd.DataFrame) -> None:
-        with self._lock:
-            if key in self._cache:
-                self._cache.move_to_end(key)
-            self._cache[key] = df
-            if len(self._cache) > self._maxsize:
-                self._cache.popitem(last=False)   # evict oldest
+    def set(self, dataset_id: str, df: pd.DataFrame) -> None:
+        try:
+            key = self._key(dataset_id)
+            data = serialize_df(df)
+            self.redis.setex(key, TTL_DATAFRAME, data)
+        except Exception as e:
+            logger.warning(f"DataFrame cache set failed for {dataset_id}: {e}")
 
-    def delete(self, key: str) -> None:
-        with self._lock:
-            self._cache.pop(key, None)
+    def delete(self, dataset_id: str) -> None:
+        try:
+            key = self._key(dataset_id)
+            self.redis.delete(key)
+        except Exception as e:
+            logger.warning(f"DataFrame cache delete failed for {dataset_id}: {e}")
+
+    def exists(self, dataset_id: str) -> bool:
+        try:
+            key = self._key(dataset_id)
+            return self.redis.exists(key) > 0
+        except Exception:
+            return False
 
     def keys(self) -> list[str]:
-        with self._lock:
-            return list(self._cache.keys())
+        try:
+            pattern = make_cache_key("df", "*")
+            keys = self.redis.keys(pattern)
+            return [k.decode().split(":", 2)[-1] for k in keys]
+        except Exception:
+            return []
 
-
-df_cache = _LRUCache()
+df_cache = DataFrameCache()

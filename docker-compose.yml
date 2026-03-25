@@ -4,7 +4,30 @@ version: "3.9"
 
 services:
 
-  # Postgres
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server 
+      --appendonly yes 
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD required}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"   # expose for Redis CLI access in dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "$REDIS_PASSWORD", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-net
+
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -15,7 +38,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"   # expose for local psql / pgAdmin access in dev
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -24,7 +47,6 @@ services:
     networks:
       - app-net
 
-  # MinIO
   minio:
     image: minio/minio:latest
     restart: unless-stopped
@@ -36,7 +58,7 @@ services:
       - minio_data:/data
     ports:
       - "9000:9000"   # S3 API
-      - "9001:9001"   # MinIO console UI
+      - "9001:9001"   # MinIO console
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 10s
@@ -45,7 +67,6 @@ services:
     networks:
       - app-net
 
-  # Backend
   backend:
     build:
       context: .
@@ -53,14 +74,24 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      # Database
       DATABASE_URL: >-
         postgresql+psycopg2://${POSTGRES_USER:-aiuser}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aiassistant}
-      S3_ENDPOINT_URL:    http://minio:9000
-      AWS_ACCESS_KEY_ID:  ${AWS_ACCESS_KEY_ID:-minioadmin}
+      
+      # MinIO
+      S3_ENDPOINT_URL:       http://minio:9000
+      AWS_ACCESS_KEY_ID:     ${AWS_ACCESS_KEY_ID:-minioadmin}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      AI_BUCKET:          ${AI_BUCKET:-ai-data-assistant}
+      AI_BUCKET:             ${AI_BUCKET:-ai-data-assistant}
+      
+      # Redis
+      REDIS_URL:      redis://redis:6379/0
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       minio:
         condition: service_healthy
@@ -69,7 +100,6 @@ services:
     networks:
       - app-net
 
-  # Frontend
   frontend:
     build:
       context: .
@@ -86,8 +116,9 @@ services:
       - app-net
 
 volumes:
-  postgres_data:   # survives container restarts
-  minio_data:      # survives container restarts
+  postgres_data:
+  redis_data:     
+  minio_data:
 
 networks:
   app-net:
