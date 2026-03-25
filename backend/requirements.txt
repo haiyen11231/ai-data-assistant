@@ -1,6 +1,6 @@
 fastapi==0.115.12
 uvicorn[standard]==0.34.0
-python-multipart==0.0.20   # required for UploadFile
+python-multipart==0.0.20
 pydantic==2.11.3
 pandas==1.5.3
 openpyxl==3.1.5
@@ -9,3 +9,11 @@ openai==1.109.1
 pandasai==2.3.2
 matplotlib==3.7.5
 python-dotenv==1.2.2
+
+# Postgres
+sqlalchemy==2.0.41
+psycopg2-binary==2.9.10
+alembic==1.16.1
+
+# S3 / MinIO
+boto3==1.38.1

@@ -1,22 +1,42 @@
 from __future__ import annotations
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException
+from sqlalchemy.orm import Session as DBSession
+
+from backend.crud import feedback as fb_crud
+from backend.crud import prompts as prompt_crud
+from backend.db.session import get_db
 from backend.models.schemas import FeedbackRequest, FeedbackResponse
-from backend.services.history_store import history_store
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
 
 
+def _session_id(request: Request) -> str:
+    sid = request.cookies.get("session_id")
+    if not sid:
+        raise HTTPException(status_code=401, detail="No session cookie.")
+    return sid
+
+
 @router.patch("/", response_model=FeedbackResponse)
-def rate(request: Request, req: FeedbackRequest) -> FeedbackResponse:
-    sid = request.cookies.get("session_id", "anonymous")
-    updated = history_store.apply_feedback(sid, req)
-    if updated is None:
+def rate(
+    request: Request,
+    req: FeedbackRequest,
+    db: DBSession = Depends(get_db),
+) -> FeedbackResponse:
+    sid = _session_id(request)
+
+    # Verify the prompt belongs to this session (access control)
+    prompt = prompt_crud.get_prompt(db, req.prompt_id, sid)
+    if prompt is None:
         raise HTTPException(
             status_code=404,
             detail=f"Prompt {req.prompt_id!r} not found in this session.",
         )
+
+    fb_crud.upsert_feedback(db, prompt_id=req.prompt_id, rating=req.rating)
+
     return FeedbackResponse(
         success=True,
-        prompt_id=updated.prompt_id,
-        rating=updated.rating or 0,
+        prompt_id=req.prompt_id,
+        rating=req.rating,
     )

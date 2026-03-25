@@ -32,6 +32,14 @@ class APIClient:
         except Exception as e:
             return {"success": False, "message": str(e), "sheets": []}
 
+    def list_datasets(self) -> dict:
+        try:
+            response = self._client.get("/api/v1/datasets/list")
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            return {"success": False, "message": str(e), "sheets": []}
+    
     def preview(self, dataset_id: str, n: int = 10) -> dict:
         try:
             response = self._client.get(
