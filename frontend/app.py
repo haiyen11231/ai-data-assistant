@@ -155,7 +155,7 @@ c3.metric("Showing", min(n, len(df)))
 # Data table
 st.dataframe(
     df.head(n),
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
 )
 
@@ -167,7 +167,7 @@ with st.expander("Column details"):
         "Non-null": df.count().values,
         "Nulls": df.isnull().sum().values,
     })
-    st.dataframe(col_info, use_container_width=True, hide_index=True)
+    st.dataframe(col_info, width="stretch", hide_index=True)
 
 # AI chat section
 st.divider()
@@ -194,6 +194,59 @@ selected_ai_key = ai_options[selected_ai_label]
 messages = st.session_state["messages_by_file"].setdefault(selected_ai_key, [])
 ai_df = st.session_state["dataframes"][selected_ai_key]
 
+# Suggested prompts only showed when there are no messages yet for this file
+def _generate_suggestions(df: pd.DataFrame) -> list[str]:
+    """
+    Generate 3 relevant suggested questions based on the DataFrame's columns and types.
+    Rules:
+    - Always suggest a summary/overview question
+    - Add numeric-specific questions if numeric columns exist
+    - Add category-specific questions if low-cardinality text columns exist
+    """
+    suggestions = []
+    cols = df.columns.tolist()
+    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    text_cols = [
+        c for c in df.select_dtypes(include="object").columns.tolist()
+        if df[c].nunique() < 20  # low cardinality = likely a category
+    ]
+
+    # Always: overview
+    suggestions.append("Give me a summary of this dataset")
+
+    # Numeric: distribution or top values
+    if numeric_cols:
+        col = numeric_cols[0]
+        suggestions.append(f"What is the average {col}?")
+
+    # Numeric + category: grouped analysis
+    if numeric_cols and text_cols:
+        num = numeric_cols[0]
+        cat = text_cols[0]
+        suggestions.append(f"Show {num} grouped by {cat} as a bar chart")
+
+    # Category only (no numeric)
+    elif text_cols and not numeric_cols:
+        cat = text_cols[0]
+        suggestions.append(f"What are the most common values in {cat}?")
+
+    # Fallback if nothing specific found
+    if len(suggestions) < 3:
+        suggestions.append("Show me the top 10 rows")
+
+    return suggestions[:3]  # cap at 3
+
+if not messages:
+    suggestions = _generate_suggestions(ai_df)
+    if suggestions:
+        st.markdown("**Not sure what to ask? Try one of these:**")
+        cols = st.columns(len(suggestions))
+        for i, suggestion in enumerate(suggestions):
+            with cols[i]:
+                if st.button(suggestion, key=f"suggest_{selected_ai_key}_{i}", width="stretch"):
+                    st.session_state["pending_question"] = suggestion
+                    st.rerun()
+
 # Render existing chat messages
 for msg in messages:
     with st.chat_message(msg["role"]):
@@ -204,8 +257,20 @@ for msg in messages:
                 st.image(msg["chart_path"], width="stretch")
             except Exception:
                 pass
+        # If the message has a DataFrame, display it
+        if msg.get("dataframe") is not None:
+            st.dataframe(msg["dataframe"].fillna("").astype(str), width="stretch", hide_index=False)
+
+# Pick up any suggestion that was clicked on previous rerun
+if "pending_question" in st.session_state:
+    prefill = st.session_state.pop("pending_question")
+else:
+    prefill = None
 
 question = st.chat_input("Ask a question about the data…")
+
+# Use the suggestion click as the question if no manual input
+question = question or prefill
 
 if question:
     # Store question in session state and display immediately
@@ -255,25 +320,35 @@ if question:
                 if chart_files:
                     chart_path = chart_files[0]
                 
-                # Normalize response
+                # Normalize response and render appropriately
                 if chart_path:
+                    # Render chart with a caption
                     response_str = "Here is the chart based on your question:"
-                elif isinstance(response, pd.DataFrame):
-                    response_str = response.to_markdown(index=False)
-                elif response is None:
-                    response_str = "No response generated. Try rephrasing your question."
-                else:
-                    response_str = str(response)
-                
-                st.markdown(response_str)
-                if chart_path:
+                    st.markdown(response_str)
                     st.image(chart_path, width="stretch")
+
+                elif isinstance(response, pd.DataFrame):
+                    # Render DataFrame responses as tables
+                    response_str = f"Here are the results:"
+                    st.markdown(response_str)
+                    st.dataframe(response.fillna("").astype(str), width="stretch", hide_index=False)
+
+                elif response is None:
+                    # Handle cases where the LLM doesn't return a direct answer
+                    response_str = "No response generated. Try rephrasing your question."
+                    st.markdown(response_str)
+
+                else:
+                    # Render plain text responses
+                    response_str = str(response)
+                    st.markdown(response_str)
 
                 # Store the assistant's response in session state
                 messages.append({
                     "role": "assistant",
                     "content": response_str,
                     "chart_path": chart_path,
+                    "dataframe": response if isinstance(response, pd.DataFrame) else None,
                 })
             except Exception as e:
                 error_msg = f"Error generating response: {str(e)}"
@@ -282,6 +357,7 @@ if question:
                     "role": "assistant",
                     "content": error_msg,
                     "chart_path": None,
+                    "dataframe": None,
                 })
         
     st.rerun()

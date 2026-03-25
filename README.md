@@ -208,6 +208,37 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+## To Do List
+
+- [x] System should be able to allow users to upload 1 or more xls/csv files
+- [x] System should be able to display top N rows of the sheets uploaded
+  - [x] System should be able to allow users to define N
+  - [x] System should be able to allow users to select which sheet/file to preview
+- [x] System should have some suggested prompts according to selected sheets
+- [x] System should be able to allow users to ask questions about uploaded data
+    - [x] System should be able to return responses in different formats (text/table/chart)
+    - [ ] System should be able to handle mixed response types (text + table + chart)
+    - [ ] System should be able to handle edge cases
+        - [x] System should be able to handle simple question (simple sentence)
+        - [ ] System should be able to handle complex question (compound sentence)
+        - [x] System should be able to handle no result / empty response
+        - [ ] System should be able to handle invalid queries
+- [ ] System should have some suggested prompts according to selected sheets
+to get answers from the CSVs/Excels. User can ask questions for any of the sheets/ CSVs
+- [x] System should be able to support querying one sheet at a time
+- [ ] System should be able to support querying multiple sheets/files (future improvement)
+    - [ ] System should be able to define relationships or joins between datasets
+    - [ ] System should be able to allow users to select multiple datasets
+    - [ ] Fix: summary not consistent through different dataset in format, some parsed in table, some in text string
+    - [ ] System should be able to store chat history in terms of files
+
+- [ ] System should be able to keep a history of prompts that users can re-use when needed.
+- [ ] System should be able to store chat history per session per file/sheet
+- [ ] System should be able to link chat history with uploaded files
+- [ ] System should be able to allow users to reuse previous prompts
+- [ ] System should be able to display chat history in the UI
+- [ ] System should be able to allow users to provide feedback on responses
+
 ## Further Improvements
 
 - **Kubernetes:** swap Docker Compose for K8s when horizontal scaling is needed
