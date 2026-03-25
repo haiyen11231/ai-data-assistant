@@ -232,12 +232,11 @@ to get answers from the CSVs/Excels. User can ask questions for any of the sheet
     - [ ] Fix: summary not consistent through different dataset in format, some parsed in table, some in text string
     - [ ] System should be able to store chat history in terms of files
 
-- [ ] System should be able to keep a history of prompts that users can re-use when needed.
-- [ ] System should be able to store chat history per session per file/sheet
-- [ ] System should be able to link chat history with uploaded files
-- [ ] System should be able to allow users to reuse previous prompts
-- [ ] System should be able to display chat history in the UI
-- [ ] System should be able to allow users to provide feedback on responses
+- [x] System should be able to store chat history per session per file/sheet
+- [x] System should be able to link chat history with uploaded files
+- [x] System should be able to allow users to reuse previous prompts
+- [x] System should be able to display chat history in the UI
+- [x] System should be able to allow users to provide feedback on responses
 
 ## Further Improvements
 

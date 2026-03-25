@@ -1,3 +1,4 @@
+import uuid
 import streamlit as st
 import pandas as pd
 import os, glob
@@ -28,8 +29,6 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("📊 AI Data Assistant")
-st.caption("Step 2 — upload files, preview data, and ask AI questions")
 
 # session state init
 if "dataframes" not in st.session_state:
@@ -43,6 +42,45 @@ if "file_meta" not in st.session_state:
 if "messages_by_file" not in st.session_state:
     # messages_by_file = { "filename :: sheet_name": [ { role, content, chart_path } ] }
     st.session_state["messages_by_file"] = {}
+
+if "history" not in st.session_state:
+    # Flat list of every Q&A across all files
+    # [ { id, question, file_label, answer, chart_path, dataframe, rating } ]
+    st.session_state["history"] = []
+
+if "reuse_prompt" not in st.session_state:
+    st.session_state["reuse_prompt"] = None
+
+# sidebar
+with st.sidebar:
+    st.markdown("## Prompt history")
+
+    history = st.session_state["history"]
+    if not history:
+        st.caption("No prompts yet.")
+    else:
+        for item in reversed(history):
+            rating = item.get("rating")
+            icon = "👍" if rating == 1 else ("👎" if rating == -1 else "")
+
+            short_q = item["question"][:55] + "…" if len(item["question"]) > 55 else item["question"]
+
+            col_btn, col_icon = st.sidebar.columns([9, 1])
+            with col_btn:
+                if st.button(
+                    f"`@{item['file_label']}` {short_q}",
+                    key=f"hist_{item['id']}",
+                    use_container_width=True,
+                ):
+                    st.session_state["reuse_prompt"] = {
+                        "question": item["question"],
+                        "file_key": item["file_key"],
+                    }
+                    st.rerun()
+            with col_icon:
+                st.markdown(icon)
+
+st.title("📊 AI Data Assistant")
 
 # file parsing -> { sheet_name/filename: DataFrame }
 def parse_uploaded_file(uploaded_file) -> dict[str, pd.DataFrame]:
@@ -248,7 +286,7 @@ if not messages:
                     st.rerun()
 
 # Render existing chat messages
-for msg in messages:
+for msg_idx, msg in enumerate(messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         # If the message has a chart, display it
@@ -260,12 +298,42 @@ for msg in messages:
         # If the message has a DataFrame, display it
         if msg.get("dataframe") is not None:
             st.dataframe(msg["dataframe"].fillna("").astype(str), width="stretch", hide_index=False)
+        
+        # Add a feedback mechanism for each assistant response
+        if msg["role"] == "assistant":
+            # TODO: Should find better way to find assistant messages
+            # Find matching history item for this message by position
+            # assistant messages are every odd index (0=user, 1=assistant, 2=user...)
+            history_idx = msg_idx // 2
+            history = st.session_state["history"]
+
+            if history_idx < len(history):
+                current_rating = history[history_idx].get("rating")
+                col1, col2, _ = st.columns([1, 1, 10])
+                with col1:
+                    up_style = "primary" if current_rating == 1 else "secondary"
+                    if st.button("👍", key=f"up_{selected_ai_key}_{msg_idx}", type=up_style):
+                        history[history_idx]["rating"] = 1
+                        st.rerun()
+                with col2:
+                    dn_style = "primary" if current_rating == -1 else "secondary"
+                    if st.button("👎", key=f"dn_{selected_ai_key}_{msg_idx}", type=dn_style):
+                        history[history_idx]["rating"] = -1
+                        st.rerun()
 
 # Pick up any suggestion that was clicked on previous rerun
 if "pending_question" in st.session_state:
     prefill = st.session_state.pop("pending_question")
 else:
     prefill = None
+
+# Pick up any prompt reuse action from the sidebar history
+reuse = st.session_state.get("reuse_prompt")
+if reuse:
+    st.session_state["reuse_prompt"] = None
+    # If the reused prompt is for a different file, we can't auto-switch
+    # the selectbox, so just pre-fill the question for the current file
+    prefill = reuse["question"]
 
 question = st.chat_input("Ask a question about the data…")
 
@@ -343,12 +411,24 @@ if question:
                     response_str = str(response)
                     st.markdown(response_str)
 
-                # Store the assistant's response in session state
-                messages.append({
+                # Store the assistant's response in session state and history for future reference
+                assistant_msg = {
                     "role": "assistant",
                     "content": response_str,
                     "chart_path": chart_path,
                     "dataframe": response if isinstance(response, pd.DataFrame) else None,
+                }
+                messages.append(assistant_msg)
+
+                st.session_state["history"].append({
+                    "id": str(uuid.uuid4()),
+                    "question": question,
+                    "file_label": selected_ai_label,
+                    "file_key": selected_ai_key,
+                    "answer": response_str,
+                    "chart_path": chart_path,
+                    "dataframe": response if isinstance(response, pd.DataFrame) else None,
+                    "rating": None,
                 })
             except Exception as e:
                 error_msg = f"Error generating response: {str(e)}"
