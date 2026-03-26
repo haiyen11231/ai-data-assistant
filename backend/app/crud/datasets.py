@@ -3,7 +3,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from backend.db.models import Dataset, Session as SessionModel
+from app.db.models import Dataset, Session as SessionModel
 
 
 def get_or_create_session(db: Session, session_id: str) -> SessionModel:

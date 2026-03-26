@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 import uuid
 
-from backend.db.base import Base
+from app.db.base import Base
 
 
 def _now() -> datetime:

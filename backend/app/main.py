@@ -10,13 +10,13 @@ load_dotenv()
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.db.base import Base
-from backend.db.session import engine
-import backend.db.models  # noqa: F401
-from backend.services import storage
-from backend.services.redis_client import ping as redis_ping
-from backend.services.rate_limiter import rate_limiter, RATE_LIMITS
-from backend.routers import datasets, query, history, feedback
+from app.db.base import Base
+from app.db.session import engine
+import app.db.models  # noqa: F401
+from app.services import storage
+from app.services.redis_client import ping as redis_ping
+from app.services.rate_limiter import rate_limiter, RATE_LIMITS
+from app.routers import datasets, query, history, feedback
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    logger.info("Starting AI Data Assistant backend...")
+    logger.info("Starting AI Data Assistant app...")
     
     # Create Postgres tables
     Base.metadata.create_all(bind=engine)
@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    logger.info("Shutting down backend...")
+    logger.info("Shutting down app...")
 
 
 app = FastAPI(

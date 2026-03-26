@@ -4,7 +4,7 @@ from typing import Optional
 
 import pandas as pd
 
-from backend.services.redis_client import (
+from app.services.redis_client import (
     get_redis, serialize_df, deserialize_df, make_cache_key, TTL_DATAFRAME
 )
 

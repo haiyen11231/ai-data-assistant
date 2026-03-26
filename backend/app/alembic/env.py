@@ -7,8 +7,8 @@ from sqlalchemy import engine_from_config, pool
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from backend.db.base import Base
-import backend.db.models  
+from app.db.base import Base
+import app.db.models  
 
 config = context.config
 

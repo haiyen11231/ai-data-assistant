@@ -2,10 +2,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request, HTTPException
 from sqlalchemy.orm import Session as DBSession
 
-from backend.crud import prompts as prompt_crud
-from backend.crud import feedback as fb_crud
-from backend.db.session import get_db
-from backend.models.schemas import HistoryItem, HistoryResponse
+from app.crud import prompts as prompt_crud
+from app.crud import feedback as fb_crud
+from app.db.session import get_db
+from app.models.schemas import HistoryItem, HistoryResponse
 
 router = APIRouter(prefix="/history", tags=["history"])
 

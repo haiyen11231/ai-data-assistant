@@ -5,16 +5,16 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session as DBSession
 
-from backend.crud import prompts as prompt_crud
-from backend.crud import datasets as ds_crud
-from backend.db.session import get_db
-from backend.models.schemas import QueryRequest, QueryResponse
-from backend.services.df_cache import df_cache
-from backend.services.query_cache import query_cache
-from backend.services.session_cache import session_cache
-from backend.services.rate_limiter import rate_limiter, RATE_LIMITS
-from backend.services.ai_engine import run_query
-from backend.services import storage
+from app.crud import prompts as prompt_crud
+from app.crud import datasets as ds_crud
+from app.db.session import get_db
+from app.models.schemas import QueryRequest, QueryResponse
+from app.services.df_cache import df_cache
+from app.services.query_cache import query_cache
+from app.services.session_cache import session_cache
+from app.services.rate_limiter import rate_limiter, RATE_LIMITS
+from app.services.ai_engine import run_query
+from app.services import storage
 import io, pandas as pd
 
 router = APIRouter(prefix="/query", tags=["query"])

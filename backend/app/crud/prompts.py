@@ -3,8 +3,8 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session, joinedload
 
-from backend.db.models import Dataset, Prompt, Session as SessionModel
-from backend.crud.datasets import get_or_create_session
+from app.db.models import Dataset, Prompt, Session as SessionModel
+from app.crud.datasets import get_or_create_session
 
 
 def create_prompt(

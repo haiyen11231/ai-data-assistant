@@ -2,7 +2,7 @@ from __future__ import annotations
 from collections import defaultdict
 from threading import Lock
 from typing import Optional
-from backend.models.schemas import HistoryItem, FeedbackRequest
+from app.models.schemas import HistoryItem, FeedbackRequest
 
 
 class HistoryStore:

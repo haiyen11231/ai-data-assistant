@@ -4,7 +4,7 @@ import time
 import uuid
 from typing import Tuple
 
-from backend.services.redis_client import get_redis, make_cache_key, TTL_RATE_LIMIT
+from app.services.redis_client import get_redis, make_cache_key, TTL_RATE_LIMIT
 
 logger = logging.getLogger(__name__)
 

@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from backend.services.redis_client import (
+from app.services.redis_client import (
     get_redis, serialize_json, deserialize_json, make_cache_key, 
     hash_query, TTL_QUERY_RESULT
 )

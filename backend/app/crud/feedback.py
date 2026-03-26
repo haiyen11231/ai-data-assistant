@@ -4,7 +4,7 @@ from uuid import UUID
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from backend.db.models import Feedback
+from app.db.models import Feedback
 
 
 def upsert_feedback(
