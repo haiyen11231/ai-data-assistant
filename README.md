@@ -5,12 +5,13 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Functional Requirements](#functional-requirements)
-3. [Non-Functional Requirements](#non-functional-requirements)
-4. [Technology Stack](#technology-stack)
-5. [Quick Start](#quick-start)
-6. [Local Setup](#local-setup-without-docker)
-7. [Further Improvements](#further-improvements)
+2. [System Architecture](#system-architecture)
+3. [Functional Requirements](#functional-requirements)
+4. [Non-Functional Requirements](#non-functional-requirements)
+5. [Technology Stack](#technology-stack)
+6. [Quick Start](#quick-start)
+7. [Local Setup](#local-setup-without-docker)
+8. [Further Improvements](#further-improvements)
 
 ## Overview
 
@@ -23,6 +24,35 @@ This application allows users to:
 - Rate answers with thumbs up / thumbs down feedback
 
 The system is designed around five pillars: **scalability**, **reliability**, **availability**, **performance efficiency**, and **security**.
+
+## System Architecture
+
+```mermaid
+flowchart LR
+    S[Streamlit Frontend]
+
+    S --> A[FastAPI App]
+    A --> MW[Middleware Layer\nRate Limit + Session Cookie + CORS]
+
+    MW --> DS[Dataset Service\n/upload /list /preview]
+    MW --> QS[Query Service\n/ask]
+    MW --> HS[History Service\n/list history]
+    MW --> FS[Feedback Service\n/rate]
+
+    DS --> PG[(PostgreSQL)]
+    DS --> MI[(MinIO)]
+    DS <--> RD[(Redis)]
+
+    QS --> PG
+    QS --> MI
+    QS <--> RD
+    QS --> OA[OpenAI via PandasAI]
+
+    HS --> PG
+    HS --> RD
+
+    FS --> PG
+```
 
 ## Functional Requirements
 
@@ -121,8 +151,8 @@ docker-compose up --build
 ```
 
 ### 3. Open the app
-- Frontend: ...
-- Backend API docs: ...
+- Frontend: http://localhost:8501
+- Backend API docs: http://localhost:8000/api/docs
 
 ## Local Setup (without Docker)
 
