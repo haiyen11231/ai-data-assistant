@@ -63,3 +63,23 @@ def get_prompt(db: Session, prompt_id: str, session_id: str) -> Prompt | None:
         )
         .first()
     )
+
+
+def get_latest_prompt_by_question(
+    db: Session,
+    *,
+    session_id: str,
+    dataset_id: str,
+    question: str,
+) -> Prompt | None:
+    return (
+        db.query(Prompt)
+        .options(joinedload(Prompt.feedback))
+        .filter(
+            Prompt.session_id == UUID(session_id),
+            Prompt.dataset_id == UUID(dataset_id),
+            Prompt.question == question,
+        )
+        .order_by(Prompt.created_at.desc())
+        .first()
+    )

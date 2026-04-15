@@ -29,6 +29,7 @@ def run_query(
             df=df,
             config={
                 "llm": llm,
+                "enable_cache": False,
                 "save_charts": True,
                 "save_charts_path": tmp_dir,
                 "verbose": False,

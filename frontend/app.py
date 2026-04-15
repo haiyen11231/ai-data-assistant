@@ -11,6 +11,13 @@ st.set_page_config(page_title="AI Data Assistant", page_icon="📊", layout="wid
 
 client = get_client()
 
+
+def _normalize_history_question(question: str) -> str:
+    if question.endswith(" [CACHED]"):
+        return question[:-9]
+    return question
+
+# Fetch datasets from source of truth (backend) to restore/sync session state on app start or refresh
 def _restore_session() -> None:
     result = client.list_datasets()
     if not result.get("success"):
@@ -20,21 +27,20 @@ def _restore_session() -> None:
         if sheet["dataset_id"] not in known_ids:
             st.session_state.setdefault("file_meta", []).append(sheet)
 
-
 # Session state init
 if "file_meta" not in st.session_state:
-    st.session_state["file_meta"] = []
+    st.session_state["file_meta"] = [] # [ { "dataset_id": str, "filename": str, "sheet_name": str, "rows": int, "cols": int, "columns": list[str] }]
 if "messages_by_dataset" not in st.session_state:
     st.session_state["messages_by_dataset"] = {}
 if "reuse_prompt" not in st.session_state:
     st.session_state["reuse_prompt"] = None
 
-_restore_session()   # ← runs on every rerun; idempotent
+_restore_session()   # ← runs on every rerun; idempotent; sync with backend datasets; ensures session state is up to date
 
 # Sidebar 
 with st.sidebar:
     st.markdown("## 🕘 Prompt history")
-    hist_resp = client.get_history()
+    hist_resp = client.get_history() # {"success": True, "items": [ { "prompt_id": str, "dataset_id": str, "filename": str, "sheet_name": str, "question": str, "answer": str, "chart_b64": str | None, "table_rows": list[dict[str, any]] | None, "rating": int | None }, ... ] }
     history_items: list[dict] = hist_resp.get("items", [])
 
     if not history_items:
@@ -52,8 +58,13 @@ with st.sidebar:
             col_btn, col_icon = st.sidebar.columns([9, 1])
             with col_btn:
                 if st.button(label, key=f"hist_{item['prompt_id']}", use_container_width=True):
-                    st.session_state["reuse_prompt"] = {
-                        "question": item["question"],
+                    st.session_state["history_focus"] = {
+                        "prompt_id": item["prompt_id"],
+                        "question": _normalize_history_question(item["question"]),
+                        "answer": item.get("answer", ""),
+                        "chart_b64": item.get("chart_b64"),
+                        "table_rows": item.get("table_rows"),
+                        "rating": item.get("rating"),
                         "dataset_id": item["dataset_id"],
                     }
                     st.rerun()
@@ -75,7 +86,7 @@ if uploaded_files:
     if new_files:
         with st.spinner(f"Uploading {len(new_files)} file(s)…"):
             payload = [(f.name, f.read(), f.type or "application/octet-stream") for f in new_files]
-            result = client.upload_files(payload)
+            result = client.upload_files(payload) # {"success": bool, "sheets": [ { "dataset_id": str, "filename": str, "sheet_name": str, "rows": int, "cols": int, "columns": list[str] } ], "message": str }
         if result.get("success"):
             for sheet in result["sheets"]:
                 if sheet["dataset_id"] not in {m["dataset_id"] for m in st.session_state["file_meta"]}:
@@ -119,6 +130,13 @@ st.divider()
 st.subheader("💬 Ask AI about your data")
 
 ai_options = {f"{m['filename']} — {m['sheet_name']}": m for m in st.session_state["file_meta"]}
+focus = st.session_state.get("history_focus")
+if focus:
+    for lbl, meta in ai_options.items():
+        if meta["dataset_id"] == focus["dataset_id"]:
+            st.session_state["ai_file_select"] = lbl
+            break
+
 selected_ai_label = st.selectbox(
     "Select file / sheet for AI analysis",
     list(ai_options.keys()),
@@ -129,11 +147,38 @@ selected_ai_meta = ai_options[selected_ai_label]
 selected_ai_dataset_id = selected_ai_meta["dataset_id"]
 messages = st.session_state["messages_by_dataset"].setdefault(selected_ai_dataset_id, [])
 
+focus = st.session_state.pop("history_focus", None)
+if focus and focus["dataset_id"] == selected_ai_dataset_id:
+    focus_pid = focus["prompt_id"]
+    already_opened = any(
+        (m.get("role") == "assistant" and m.get("prompt_id") == focus_pid)
+        for m in messages
+    )
+    if not already_opened:
+        messages.append({
+            "role": "user",
+            "content": f"`@{selected_ai_label}` {focus['question']}",
+        })
+        messages.append({
+            "role": "assistant",
+            "content": focus.get("answer", ""),
+            "chart_b64": focus.get("chart_b64"),
+            "table_rows": focus.get("table_rows"),
+            "prompt_id": focus_pid,
+            "rating": focus.get("rating"),
+        })
+    st.rerun()
+
 if not messages:
+    cols = selected_ai_meta.get("columns") or []
+    first_col = cols[0] if len(cols) > 0 else "the main metric"
+    second_col = cols[1] if len(cols) > 1 else "another important column"
+    third_col = cols[2] if len(cols) > 2 else "a third important column"
+
     suggestions = [
-        "Give me a summary of this dataset",
-        f"Show distribution of {selected_ai_meta['columns'][0]} as a bar chart" if selected_ai_meta.get("columns") else "What are the column names?",
-        "How many missing values are there per column?",
+        "Summarize this dataset with 3 key insights.",
+        f"Find outliers and unusual records related to {second_col}, and explain why they stand out.",
+        f"Analyze the relationship between {second_col} and {third_col}; include a chart if useful.",
     ]
     st.markdown("**Not sure what to ask? Try one of these:**")
     sug_cols = st.columns(len(suggestions))
@@ -153,19 +198,16 @@ for msg_idx, msg in enumerate(messages):
         if msg["role"] == "assistant" and msg.get("prompt_id"):
             pid = msg["prompt_id"]
             cur = msg.get("rating")
+            key_suffix = f"{selected_ai_dataset_id}_{msg_idx}_{pid}"
             fb1, fb2, _ = st.columns([1, 1, 10])
             with fb1:
-                if st.button("👍", key=f"up_{pid}", type="primary" if cur == 1 else "secondary"):
+                if st.button("👍", key=f"up_{key_suffix}", type="primary" if cur == 1 else "secondary"):
                     client.rate(pid, 1); msg["rating"] = 1; st.rerun()
             with fb2:
-                if st.button("👎", key=f"dn_{pid}", type="primary" if cur == -1 else "secondary"):
+                if st.button("👎", key=f"dn_{key_suffix}", type="primary" if cur == -1 else "secondary"):
                     client.rate(pid, -1); msg["rating"] = -1; st.rerun()
 
 prefill = st.session_state.pop("pending_question", None)
-reuse = st.session_state.get("reuse_prompt")
-if reuse:
-    st.session_state["reuse_prompt"] = None
-    prefill = reuse["question"]
 
 question = st.chat_input("Ask a question about the data…") or prefill
 

@@ -11,7 +11,6 @@
 5. [Quick Start](#quick-start)
 6. [Local Setup](#local-setup-without-docker)
 7. [Further Improvements](#further-improvements)
-8. [References](#references)
 
 ## Overview
 
@@ -158,26 +157,33 @@ streamlit run app.py
     - [ ] System should be able to handle mixed response types (text + table + chart)
     - [ ] System should be able to handle edge cases
         - [x] System should be able to handle simple question (simple sentence)
-        - [ ] System should be able to handle complex question (compound sentence)
+        - [x] System should be able to handle complex question (compound sentence with multiple ideas)
         - [x] System should be able to handle no result / empty response
-        - [ ] System should be able to handle invalid queries
+        - [ ] System should be able to handle invalid queries (Add Guardrail to filter unrelated question)
 - [x] System should be able to support querying one sheet at a time
 - [ ] System should be able to support querying multiple sheets/files (future improvement)
     - [ ] System should be able to define relationships or joins between datasets
     - [ ] System should be able to allow users to select multiple datasets
-    - [ ] Fix: summary not consistent through different dataset in format, some parsed in table, some in text string
-    - [ ] System should be able to store chat history in terms of files
 
-- [x] System should be able to store chat history per session per file/sheet
-- [x] System should be able to link chat history with uploaded files
-- [x] System should be able to allow users to reuse previous prompts
-- [x] System should be able to display chat history in the UI
+- [x] System should be able to store chat history per file/sheet per session
+- [x] System should be able to allow users to reuse previous prompts (Caching)
+- [x] System should be able to display chat history in the UI (in terms of question in stead of file or chat)
 - [x] System should be able to allow users to provide feedback on responses
+- [ ] System should be able to delete data record after user delete file
 
 ## Further Improvements
 
-- **Kubernetes:** swap Docker Compose for K8s when horizontal scaling is needed
+- **Async job queue with Celery + Redis:**
+    - Move expensive AI query execution to Celery workers and return `job_id` immediately from API
+    - Add job status endpoints and poll from frontend
+    - Configure retries for transient OpenAI/network errors
 
-## References
+- **Response with mixed outputs (text + table + chart)**
 
-- 
+- **Add `dataset_ids` in `session cache` so that listing sheets can use `dataset cache` instead of hitting Postgres**
+
+- **Input validation and guardrails:**
+    - Strengthen query validation for malicious/invalid prompts
+    - Add clearer user-facing error messages and remediation hints
+
+- **NGINX reverse proxy:** Place FastAPI behind NGINX for routing, load balancing, and protection

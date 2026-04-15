@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 import uuid
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session as DBSession
@@ -19,6 +20,7 @@ import io, pandas as pd
 
 router = APIRouter(prefix="/query", tags=["query"])
 _OPENAI_KEY: str = os.environ.get("OPENAI_API_KEY", "")
+logger = logging.getLogger(__name__)
 
 
 def _session_id(request: Request) -> str:
@@ -63,7 +65,7 @@ def ask(
 
     # Verify dataset ownership
     cached_meta = session_cache.get_dataset_meta(req.dataset_id)
-    if cached_meta:
+    if cached_meta and cached_meta.get("s3_key"):
         meta_dict = cached_meta
     else:
         meta_row = ds_crud.get_dataset(db, req.dataset_id, sid)
@@ -75,23 +77,38 @@ def ask(
             "s3_key": meta_row.s3_key,
         }
 
-    # CACHE CHECK 
-    # Try cached query result first
-    cached_result = query_cache.get(req.question, req.dataset_id)
+    # CACHE CHECK
+    # If latest feedback for this exact question is dislike, force regeneration.
+    existing = prompt_crud.get_latest_prompt_by_question(
+        db,
+        session_id=sid,
+        dataset_id=req.dataset_id,
+        question=req.question,
+    )
+    last_feedback_disliked = bool(
+        existing is not None
+        and existing.feedback is not None
+        and existing.feedback.rating == -1
+    )
+
+    cached_result = None if last_feedback_disliked else query_cache.get(req.question, req.dataset_id)
     if cached_result:
-        prompt_id = str(uuid.uuid4())
-        
-        # Still persist to Postgres for history (with cache flag)
-        prompt_crud.create_prompt(
-            db,
-            session_id=sid,
-            dataset_id=req.dataset_id,
-            prompt_id=prompt_id,
-            question=req.question + " [CACHED]",  # Mark as cached in history
-            answer=cached_result["answer"],
-            chart_b64=cached_result.get("chart_b64"),
-            table_rows=cached_result.get("table_rows"),
-        )
+
+        if existing is not None:
+            prompt_id = str(existing.id)
+        else:
+            # Persist once if this cache entry exists but history row does not.
+            prompt_id = str(uuid.uuid4())
+            prompt_crud.create_prompt(
+                db,
+                session_id=sid,
+                dataset_id=req.dataset_id,
+                prompt_id=prompt_id,
+                question=req.question,
+                answer=cached_result["answer"],
+                chart_b64=cached_result.get("chart_b64"),
+                table_rows=cached_result.get("table_rows"),
+            )
 
         return QueryResponse(
             success=True,
@@ -102,18 +119,36 @@ def ask(
             message="(cached result)"
         )
 
+    if last_feedback_disliked:
+        logger.info(
+            "Bypassing cache for dataset=%s question=%r due to dislike feedback",
+            req.dataset_id,
+            req.question,
+        )
+
     # CACHE MISS → RUN AI QUERY 
     # Load DataFrame (Redis cache → MinIO fallback)
     df = df_cache.get(req.dataset_id)
     if df is None:
-        raw = storage.download_file(meta_dict["s3_key"])
-        ext = meta_dict["filename"].rsplit(".", 1)[-1].lower()
-        buf = io.BytesIO(raw)
-        df = pd.read_csv(buf) if ext == "csv" else pd.ExcelFile(buf).parse(meta_dict["sheet_name"])
-        df_cache.set(req.dataset_id, df)
+        try:
+            raw = storage.download_file(meta_dict["s3_key"])
+            ext = meta_dict["filename"].rsplit(".", 1)[-1].lower()
+            buf = io.BytesIO(raw)
+            if ext == "csv":
+                df = pd.read_csv(buf)
+            else:
+                df = pd.ExcelFile(buf, engine="openpyxl" if ext == "xlsx" else "xlrd").parse(meta_dict["sheet_name"])
+            df_cache.set(req.dataset_id, df)
+        except Exception as exc:
+            logger.exception("Failed loading dataset %s for query", req.dataset_id)
+            raise HTTPException(status_code=502, detail=f"Failed to load dataset from storage: {exc}")
 
     # Run AI query
-    result = run_query(df, req.question, _OPENAI_KEY)
+    try:
+        result = run_query(df, req.question, _OPENAI_KEY)
+    except Exception as exc:
+        logger.exception("AI query failed for dataset %s", req.dataset_id)
+        raise HTTPException(status_code=502, detail=f"AI query failed: {exc}")
     prompt_id = str(uuid.uuid4())
 
     # Cache the result

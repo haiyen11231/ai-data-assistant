@@ -58,6 +58,7 @@ async def upload_files(
         )
 
     all_sheets: list[SheetMeta] = []
+    cache_metas: list[dict[str, Any]] = []
 
     for file in files:
         raw_bytes = await file.read()
@@ -105,12 +106,17 @@ async def upload_files(
                 "cols": len(df.columns),
                 "columns": df.columns.tolist(),
             }
-            session_cache.set_dataset_meta(dataset_id, sheet_meta)
+            cache_meta = {
+                **sheet_meta,
+                "s3_key": s3_key,
+            }
+            session_cache.set_dataset_meta(dataset_id, cache_meta)
+            cache_metas.append(cache_meta)
 
             all_sheets.append(SheetMeta(**sheet_meta))
 
     # Warm session cache
-    session_cache.warm_session_cache(sid, [s.dict() for s in all_sheets])
+    session_cache.warm_session_cache(sid, cache_metas)
 
     return UploadResponse(
         success=True,
@@ -147,7 +153,13 @@ def list_datasets(
                     cols=row.col_count,
                     columns=row.columns,
                 )
-                session_cache.set_dataset_meta(str(row.id), sheet_meta.dict())
+                session_cache.set_dataset_meta(
+                    str(row.id),
+                    {
+                        **sheet_meta.dict(),
+                        "s3_key": row.s3_key,
+                    },
+                )
                 cached_sheets.append(sheet_meta)
                 
         return UploadResponse(success=True, sheets=cached_sheets)
@@ -164,7 +176,13 @@ def list_datasets(
             cols=row.col_count,
             columns=row.columns,
         )
-        session_cache.set_dataset_meta(str(row.id), sheet_meta.dict())
+        session_cache.set_dataset_meta(
+            str(row.id),
+            {
+                **sheet_meta.dict(),
+                "s3_key": row.s3_key,
+            },
+        )
         sheets.append(sheet_meta)
     
     return UploadResponse(success=True, sheets=sheets)
@@ -182,7 +200,7 @@ def preview(
 
     # Check cached metadata first
     cached_meta = session_cache.get_dataset_meta(dataset_id)
-    if cached_meta:
+    if cached_meta and cached_meta.get("s3_key"):
         meta_dict = cached_meta
     else:
         # Fallback to database
